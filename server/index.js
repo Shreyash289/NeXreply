@@ -1,10 +1,14 @@
 import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
+import path from "path";
+import { fileURLToPath } from "url";
 
 import { processNeXreplyMessage } from "../services/llmEngine.js";
 
-dotenv.config();
+// Ensure we load the project's root `.env` regardless of the current working directory.
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+dotenv.config({ path: path.join(__dirname, "..", ".env") });
 
 const app = express();
 
@@ -30,7 +34,11 @@ app.post("/chat", async (req, res) => {
     return res.json({ reply });
   } catch (err) {
     console.error(err);
-    return res.status(500).json({ reply: "Sorry, I couldn't process your message." });
+    const isMissingOpenAiKey = err?.message?.includes("Missing OPENAI_API_KEY");
+    const reply = isMissingOpenAiKey
+      ? "Server misconfigured: OPENAI_API_KEY is missing."
+      : "Sorry, I couldn't process your message.";
+    return res.status(500).json({ reply });
   }
 });
 
@@ -61,7 +69,11 @@ app.post("/webhook", async (req, res) => {
     return res.status(200).type("text/xml").send(xml);
   } catch (err) {
     console.error(err);
-    const xml = `<Response><Message>Sorry, I couldn't process your message.</Message></Response>`;
+    const isMissingOpenAiKey = err?.message?.includes("Missing OPENAI_API_KEY");
+    const fallbackText = isMissingOpenAiKey
+      ? "Server misconfigured: OPENAI_API_KEY is missing."
+      : "Sorry, I couldn't process your message.";
+    const xml = `<Response><Message>${escapeXml(fallbackText)}</Message></Response>`;
     return res.status(200).type("text/xml").send(xml);
   }
 });
