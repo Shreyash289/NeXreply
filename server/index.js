@@ -10,6 +10,7 @@ import { processNeXreplyMessage } from "../services/llmEngine.js";
 // Ensure we load `.env` regardless of the current working directory or deployment layout.
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 let envLoaded = false;
+const envCandidateStatus = [];
 const envCandidates = [
   // Repo root: <repo>/.env
   path.join(__dirname, "..", ".env"),
@@ -21,7 +22,9 @@ const envCandidates = [
 ];
 
 for (const candidate of envCandidates) {
-  if (!fs.existsSync(candidate)) continue;
+  const exists = fs.existsSync(candidate);
+  envCandidateStatus.push({ candidate, exists });
+  if (!exists) continue;
   const result = dotenv.config({ path: candidate });
   // `result.error` can be set even when the file exists.
   if (!result?.error && result?.parsed) {
@@ -57,7 +60,10 @@ app.post("/chat", async (req, res) => {
   } catch (err) {
     console.error(err);
     const isMissingOpenAiKey = err?.message?.includes("Missing OPENAI_API_KEY");
-    const missingKeyMessage = `OPENAI_API_KEY missing. Create a \`.env\` in the project root (copy from \`.env.example\`) and restart the server. (Loaded .env: ${envLoaded})`;
+    const envStatus = envCandidateStatus
+      .map((s) => `${s.exists ? "[found]" : "[notfound]"} ${s.candidate}`)
+      .join(" | ");
+    const missingKeyMessage = `OPENAI_API_KEY missing. Create a \`.env\` in the project root (copy from \`.env.example\`) and restart the server. (Loaded .env: ${envLoaded}). Env status: ${envStatus}`;
     const reply = isMissingOpenAiKey
       ? missingKeyMessage
       : "Sorry, I couldn't process your message.";
@@ -86,17 +92,33 @@ app.post("/webhook", async (req, res) => {
   }
 
   try {
-    const { reply } = await processNeXreplyMessage(userMessage, from);
+    const aiPromise = processNeXreplyMessage(userMessage, from);
+    const timeoutMs = 2500; // Avoid Twilio webhook timeouts.
+    const timeoutPromise = new Promise((_, reject) => {
+      setTimeout(() => reject(new Error("Webhook timeout")), timeoutMs);
+    });
+
+    const { reply } = await Promise.race([aiPromise, timeoutPromise]).catch((err) => {
+      // Prevent an unhandled rejection if OpenAI finishes after our timeout.
+      aiPromise.catch(() => {});
+      throw err;
+    });
     const xml = `<Response><Message>${escapeXml(reply)}</Message></Response>`;
     console.log("[NeXreply][/webhook] reply:", { from, reply });
     return res.status(200).type("text/xml").send(xml);
   } catch (err) {
     console.error(err);
     const isMissingOpenAiKey = err?.message?.includes("Missing OPENAI_API_KEY");
-    const missingKeyMessage = `OPENAI_API_KEY missing. Create a \`.env\` in the project root (copy from \`.env.example\`) and restart the server. (Loaded .env: ${envLoaded})`;
+    const isWebhookTimeout = err?.message?.includes("Webhook timeout");
+    const envStatus = envCandidateStatus
+      .map((s) => `${s.exists ? "[found]" : "[notfound]"} ${s.candidate}`)
+      .join(" | ");
+    const missingKeyMessage = `OPENAI_API_KEY missing. Create a \`.env\` in the project root (copy from \`.env.example\`) and restart the server. (Loaded .env: ${envLoaded}). Env status: ${envStatus}`;
     const fallbackText = isMissingOpenAiKey
       ? missingKeyMessage
-      : "Sorry, I couldn't process your message.";
+      : isWebhookTimeout
+        ? "Sorry, I'm taking too long to respond. Please try again in a few seconds."
+        : "Sorry, I couldn't process your message.";
     const xml = `<Response><Message>${escapeXml(fallbackText)}</Message></Response>`;
     return res.status(200).type("text/xml").send(xml);
   }
