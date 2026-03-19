@@ -81,7 +81,7 @@ function App() {
       };
       setMessages((prev) => [...prev, botMessage]);
       await saveMessage(conversationId, reply, false);
-    } catch (error) {
+    } catch {
       const errorMessage: Message = {
         id: (Date.now() + 1).toString(),
         text: 'Sorry, I couldn\'t process your message. Please try again.',

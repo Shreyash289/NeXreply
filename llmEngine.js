@@ -1,13 +1,16 @@
 import OpenAI from "openai";
-import { detectIntentAdvanced } from "../utils/intentDetector.js";
-import { buildAdvancedPrompt } from "../utils/promptBuilder.js";
-import { getMemory, updateMemory } from "../utils/memoryManager.js";
-import { calculateOffer } from "../utils/negotiationEngine.js";
-
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+import { detectIntentAdvanced } from "./intentDetector.js";
+import { buildAdvancedPrompt } from "./promptBuilder.js";
+import { getMemory, updateMemory } from "./memoryManager.js";
+import { calculateOffer } from "./negotiationEngine.js";
 
 export async function processMessage(userMessage, userId, context = {}) {
   try {
+    if (!process.env.OPENAI_API_KEY) {
+      throw new Error("Missing OPENAI_API_KEY on server.");
+    }
+    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+
     const memory = getMemory(userId);
     const intent = detectIntentAdvanced(userMessage);
 
