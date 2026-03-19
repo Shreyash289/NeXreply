@@ -2,13 +2,35 @@ import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
 import path from "path";
+import fs from "fs";
 import { fileURLToPath } from "url";
 
 import { processNeXreplyMessage } from "../services/llmEngine.js";
 
-// Ensure we load the project's root `.env` regardless of the current working directory.
+// Ensure we load `.env` regardless of the current working directory or deployment layout.
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-dotenv.config({ path: path.join(__dirname, "..", ".env") });
+let envLoaded = false;
+const envCandidates = [
+  // Repo root: <repo>/.env
+  path.join(__dirname, "..", ".env"),
+  // Server folder: <repo>/server/.env
+  path.join(__dirname, ".env"),
+  // Current working directory: (varies by host)
+  path.join(process.cwd(), ".env"),
+  path.join(process.cwd(), "server", ".env"),
+];
+
+for (const candidate of envCandidates) {
+  if (!fs.existsSync(candidate)) continue;
+  const result = dotenv.config({ path: candidate });
+  // `result.error` can be set even when the file exists.
+  if (!result?.error && result?.parsed) {
+    console.log(`[NeXreply][env] Loaded .env from: ${candidate}`);
+    envLoaded = true;
+    break;
+  }
+  console.log(`[NeXreply][env] Failed to load .env from: ${candidate}`, result?.error);
+}
 
 const app = express();
 
@@ -35,8 +57,9 @@ app.post("/chat", async (req, res) => {
   } catch (err) {
     console.error(err);
     const isMissingOpenAiKey = err?.message?.includes("Missing OPENAI_API_KEY");
+    const missingKeyMessage = `OPENAI_API_KEY missing. Create a \`.env\` in the project root (copy from \`.env.example\`) and restart the server. (Loaded .env: ${envLoaded})`;
     const reply = isMissingOpenAiKey
-      ? "Server misconfigured: OPENAI_API_KEY is missing."
+      ? missingKeyMessage
       : "Sorry, I couldn't process your message.";
     return res.status(500).json({ reply });
   }
@@ -70,8 +93,9 @@ app.post("/webhook", async (req, res) => {
   } catch (err) {
     console.error(err);
     const isMissingOpenAiKey = err?.message?.includes("Missing OPENAI_API_KEY");
+    const missingKeyMessage = `OPENAI_API_KEY missing. Create a \`.env\` in the project root (copy from \`.env.example\`) and restart the server. (Loaded .env: ${envLoaded})`;
     const fallbackText = isMissingOpenAiKey
-      ? "Server misconfigured: OPENAI_API_KEY is missing."
+      ? missingKeyMessage
       : "Sorry, I couldn't process your message.";
     const xml = `<Response><Message>${escapeXml(fallbackText)}</Message></Response>`;
     return res.status(200).type("text/xml").send(xml);
